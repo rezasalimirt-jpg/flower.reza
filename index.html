@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12001c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>گل برای گل</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  html, body { margin: 0; height: 100%; background: #12001c; overflow: hidden; }
+  body { font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #start {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    font: bold 20px Arial, sans-serif; color: #fff; background: #ff6fa8;
+    border: 0; border-radius: 12px; padding: 14px 38px; cursor: pointer;
+    transition: opacity .4s;
+  }
+  #start:active { background: #e0558c; }
+  #start.hide { opacity: 0; pointer-events: none; }
+
+  #menuBtn {
+    position: fixed; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px));
+    width: 44px; height: 44px; border: 0; border-radius: 50%;
+    background: rgba(255,255,255,.12); cursor: pointer; z-index: 20;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #menuBtn:active { background: rgba(255,255,255,.25); }
+  #menuBtn svg { fill: #fff; }
+
+  #panel {
+    position: fixed; right: 10px; top: calc(62px + env(safe-area-inset-top, 0px));
+    width: min(300px, calc(100vw - 20px)); box-sizing: border-box;
+    background: rgba(35, 8, 50, .96); color: #fff; border-radius: 16px;
+    padding: 16px; z-index: 20; direction: rtl;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+  }
+  #panel[hidden] { display: none; }
+  #panel label { display: block; font-size: 14px; margin: 0 0 6px; color: #ffc2dc; }
+  #panel input[type=text] {
+    width: 100%; box-sizing: border-box; font-size: 16px; padding: 10px 12px;
+    border-radius: 10px; border: 1px solid #6b2d86; background: #1d0a2b;
+    color: #fff; font-family: inherit; direction: rtl; margin-bottom: 14px;
+  }
+  #swatches { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .sw {
+    width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+    border: 3px solid transparent; padding: 0;
+  }
+  .sw.on { border-color: #fff; }
+  .row { display: flex; gap: 8px; }
+  .row button {
+    flex: 1; font: inherit; font-size: 14px; color: #fff; background: #ff6fa8;
+    border: 0; border-radius: 10px; padding: 10px 6px; cursor: pointer;
+  }
+  .row button.alt { background: #6b2d86; }
+  .row button:active { opacity: .8; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="start">Start</button>
+
+<button id="menuBtn" aria-label="منو">
+  <svg width="22" height="22" viewBox="0 0 24 24"><circle cx="12" cy="4.5" r="2.4"/><circle cx="12" cy="12" r="2.4"/><circle cx="12" cy="19.5" r="2.4"/></svg>
+</button>
+<div id="panel" hidden>
+  <label for="txt">متن زیر گل</label>
+  <input type="text" id="txt" maxlength="60" autocomplete="off">
+  <label>رنگ گل</label>
+  <div id="swatches"></div>
+  <div class="row">
+    <button id="rnd">🎲 گل جدید</button>
+    <button id="replay" class="alt">▶ نمایش دوباره</button>
+  </div>
+</div>
+
+<script>
+const DEFAULT_TEXT = "برای تو";
+
+const THEMES = [
+  ["صورتی", [["#ff6fa8","#7d0a45"],["#ff7fb4","#a8125c"],["#ff9cc6","#d81b78"],["#ffb3d3","#f2559a"],["#ffd0e4","#ff8cc0"],["#fff0f6","#ffc2dc"]]],
+  ["بنفش",  [["#d9a6ff","#3d0a63"],["#e0b5ff","#5b1590"],["#e8c6ff","#7e22b8"],["#efd4ff","#a24fd8"],["#f5e3ff","#c58aea"],["#fbf2ff","#e3c2f7"]]],
+  ["آبی",   [["#8fd0ff","#08285e"],["#9fd8ff","#0d3f8f"],["#b3e0ff","#1565c0"],["#c6e8ff","#3d8fe0"],["#d9f1ff","#7ab8f0"],["#f0faff","#bfe0fa"]]],
+  ["نارنجی",[["#ffc27a","#7a1d00"],["#ffcc8a","#a83000"],["#ffd699","#d9480f"],["#ffe0b0","#f77f00"],["#ffebc7","#ffa94d"],["#fff6e5","#ffd8a8"]]],
+  ["قرمز",  [["#ff9a9a","#5c0010"],["#ffa8a8","#8a0020"],["#ffb8b8","#c4122f"],["#ffc9c9","#e8384f"],["#ffdada","#f77a8a"],["#fff0f0","#fdbcc4"]]],
+];
+const BASE_COUNTS = [8, 8, 7, 6, 5, 4];
+const SIZES = [120, 102, 84, 66, 50, 34];
+
+// ---- تنظیمات ذخیره‌شده ----
+let cfg = { text: DEFAULT_TEXT, theme: 0, seed: 7 };
+try {
+  const s = JSON.parse(localStorage.getItem("flowerCfg") || "null");
+  if (s && typeof s.text === "string") cfg = Object.assign(cfg, s);
+} catch (e) {}
+function save() { try { localStorage.setItem("flowerCfg", JSON.stringify(cfg)); } catch (e) {} }
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const btn = document.getElementById("start");
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---- هندسه‌ی لاک‌پشت (turtle) ----
+const rad = d => d * Math.PI / 180;
+function arc(p, r, ext, pts) {
+  const n = Math.max(2, Math.ceil(ext));
+  const d = ext / n, sgn = r > 0 ? 1 : -1, R = Math.abs(r);
+  const step = 2 * R * Math.sin(rad(d / 2));
+  for (let i = 0; i < n; i++) {
+    p.h += sgn * d / 2;
+    p.x += step * Math.cos(rad(p.h));
+    p.y += step * Math.sin(rad(p.h));
+    p.h += sgn * d / 2;
+    pts.push([p.x, p.y]);
+  }
+}
+
+const stem = (() => {
+  const p = { x: 0, y: 60, h: -72 }, pts = [[0, 60]];
+  arc(p, -420, 34, pts);
+  return pts;
+})();
+function makeLeaf(x, y, ang) {
+  const p = { x, y, h: ang }, pts = [[x, y]];
+  arc(p, 95, 60, pts); p.h += 120; arc(p, 95, 60, pts);
+  return { x, y, pts };
+}
+const leaves = [makeLeaf(12, -40, 15), makeLeaf(13, -110, 165)];
+
+// ---- ساخت گلبرگ‌ها (بسته به seed و رنگ) ----
+let petals = [], T_CENTER = 0, T_TEXT = 0;
+const T_STEM = 1100, T_LEAF = 1000;
+const T_PETALS = T_STEM + 300, PETAL_GAP = 90, PETAL_DUR = 380;
+const CHAR_MS = 130;
+const COLORS = ["#ff6fa8", "#ffd54a", "#ffffff", "#ff9cc6"];
+
+function buildFlower() {
+  const rng = mulberry32(cfg.seed);
+  const rand = (a, b) => a + rng() * (b - a);
+  const randint = (a, b) => Math.floor(rand(a, b + 1));
+  const pal = THEMES[cfg.theme][1];
+  petals = [];
+  for (let k = 0; k < 6; k++) {
+    let count = BASE_COUNTS[k];
+    if (cfg.seed !== 7) count = Math.max(3, count + randint(-1, 2));
+    const shift = randint(0, 40);
+    for (let i = 0; i < count; i++) {
+      const a = shift + i * 360 / count + rand(-4, 4);
+      const s = SIZES[k] * rand(0.94, 1.04);
+      const p = { x: 0, y: 0, h: a }, pts = [[0, 0]];
+      arc(p, s, 80, pts); p.h += 100; arc(p, s, 80, pts);
+      petals.push({ pts, edge: pal[k][0], fill: pal[k][1] });
+    }
+  }
+  T_CENTER = T_PETALS + petals.length * PETAL_GAP + 200;
+  T_TEXT = T_CENTER + 700;
+}
+buildFlower();
+
+let startTime = null;
+const DONE = 1e7; // یعنی انیمیشن کامل شده
+btn.addEventListener("click", () => {
+  btn.classList.add("hide");
+  startTime = performance.now();
+});
+
+// ---- ابعاد و ستاره‌ها ----
+let W, H, S, stars = [];
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  S = Math.min(W / 700, H / 600);
+  const r = mulberry32(11);
+  const hw = W / 2 / S, hh = H / 2 / S;
+  stars = [];
+  for (let i = 0; i < 80; i++) {
+    stars.push({ x: (r() * 2 - 1) * hw, y: (r() * 2 - 1) * hh, r: 1 + r() * 1.6, ph: r() * 6.28 });
+  }
+}
+window.addEventListener("resize", resize);
+resize();
+
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+function path(pts, upto) {
+  const n = upto === undefined ? pts.length : upto;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], -pts[0][1]);
+  for (let i = 1; i < n; i++) ctx.lineTo(pts[i][0], -pts[i][1]);
+}
+
+function frame(now) {
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#12001c";
+  ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(dpr * S, 0, 0, dpr * S, dpr * W / 2, dpr * H / 2);
+
+  for (const s of stars) {
+    ctx.globalAlpha = 0.55 + 0.45 * Math.sin(now / 700 + s.ph);
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(s.x, -s.y, s.r, 0, 6.2832); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  if (startTime !== null) {
+    const e = now - startTime;
+
+    const sp = clamp(e / T_STEM);
+    if (sp > 0) {
+      ctx.strokeStyle = "#2e9e5b"; ctx.lineWidth = 7; ctx.lineCap = "round";
+      path(stem, Math.max(2, Math.floor(stem.length * sp)));
+      ctx.stroke();
+    }
+
+    leaves.forEach((lf, i) => {
+      const p = easeOut(clamp((e - T_LEAF - i * 250) / 450));
+      if (p <= 0) return;
+      ctx.save();
+      ctx.translate(lf.x, -lf.y); ctx.scale(p, p); ctx.translate(-lf.x, lf.y);
+      ctx.fillStyle = "#1f8a4c"; ctx.strokeStyle = "#7fe0a3"; ctx.lineWidth = 2;
+      path(lf.pts); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    });
+
+    petals.forEach((pt, i) => {
+      const p = easeOut(clamp((e - T_PETALS - i * PETAL_GAP) / PETAL_DUR));
+      if (p <= 0) return;
+      ctx.save();
+      ctx.translate(0, -60); ctx.scale(p, p);
+      ctx.fillStyle = pt.fill; ctx.strokeStyle = pt.edge;
+      ctx.lineWidth = 2; ctx.lineJoin = "round";
+      path(pt.pts); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.restore();
+    });
+
+    const cp = easeOut(clamp((e - T_CENTER) / 450));
+    if (cp > 0) {
+      ctx.save();
+      ctx.translate(0, -60); ctx.scale(cp, cp);
+      ctx.fillStyle = "#ffd54a";
+      ctx.beginPath(); ctx.arc(0, 0, 13, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = "#ff9f1c";
+      for (let i = 0; i < 14; i++) {
+        const a = rad(i * 360 / 14);
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * 20, -Math.sin(a) * 20, 2.5, 0, 6.2832);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    const chars = Array.from(cfg.text);
+    if (e > T_TEXT && chars.length) {
+      const te = e - T_TEXT;
+      const n = Math.min(chars.length, Math.floor(te / CHAR_MS) + 1);
+      const typing = n < chars.length;
+      const ci = typing ? n - 1 : Math.floor((te - chars.length * CHAR_MS) / 150);
+      ctx.fillStyle = COLORS[((ci % 4) + 4) % 4];
+      let fs = 34;
+      const family = '"Vazirmatn", Tahoma, "Segoe UI", "Noto Naskh Arabic", sans-serif';
+      ctx.direction = "rtl"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.font = `bold ${fs}px ${family}`;
+      const wFull = ctx.measureText(cfg.text).width;
+      if (wFull > 620) { fs = Math.floor(fs * 620 / wFull); ctx.font = `bold ${fs}px ${family}`; }
+      ctx.fillText(chars.slice(0, n).join(""), 0, 255);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---- منوی سه‌نقطه ----
+const menuBtn = document.getElementById("menuBtn");
+const panel = document.getElementById("panel");
+const txt = document.getElementById("txt");
+const sw = document.getElementById("swatches");
+
+txt.value = cfg.text;
+THEMES.forEach(([name, pal], i) => {
+  const b = document.createElement("button");
+  b.className = "sw" + (i === cfg.theme ? " on" : "");
+  b.title = name; b.setAttribute("aria-label", name);
+  b.style.background = `linear-gradient(135deg, ${pal[0][0]}, ${pal[2][1]})`;
+  b.addEventListener("click", () => {
+    cfg.theme = i; save(); buildFlower();
+    [...sw.children].forEach((c, j) => c.classList.toggle("on", j === i));
+    if (startTime !== null) startTime = performance.now() - DONE;
+  });
+  sw.appendChild(b);
+});
+
+menuBtn.addEventListener("click", e => { e.stopPropagation(); panel.hidden = !panel.hidden; });
+document.addEventListener("click", e => {
+  if (!panel.hidden && !panel.contains(e.target) && !menuBtn.contains(e.target)) panel.hidden = true;
+});
+
+txt.addEventListener("input", () => { cfg.text = txt.value; save(); });
+
+document.getElementById("rnd").addEventListener("click", () => {
+  cfg.seed = 1 + Math.floor(Math.random() * 99999);
+  save(); buildFlower();
+  if (startTime !== null) startTime = performance.now() - DONE;
+});
+document.getElementById("replay").addEventListener("click", () => {
+  btn.classList.add("hide");
+  startTime = performance.now();
+  panel.hidden = true;
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
